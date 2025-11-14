@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quiz des Drapeaux — Version Avancée</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="quiz-container" role="main">
+    <header>
+      <h1>🌍 Quiz des Drapeaux</h1>
+      <div class="meta-row">
+        <div class="progress-bar" aria-hidden="true"><div class="progress"></div></div>
+        <div class="timer" id="timer" aria-live="polite">00:00</div>
+      </div>
+    </header>
+
+    <section id="quiz" class="card fade-in" aria-live="polite">
+      <h2 id="question">Question ici</h2>
+
+      <div id="flag-container" class="flag-frame" aria-hidden="true"></div>
+
+      <div id="options" class="flag-options" role="list"></div>
+
+      <div class="controls">
+        <button id="confirmBtn" class="primary">Confirmer</button>
+        <button id="skipBtn" class="secondary">Passer</button>
+      </div>
+
+      <p id="feedback" class="feedback hidden" role="status"></p>
+    </section>
+
+    <section id="result" class="card hidden" aria-hidden="true">
+      <h2>Résultat final 🎉</h2>
+      <p id="scoreText"></p>
+      <div class="final-progress">
+        <div class="final-percent" id="finalPercent">0%</div>
+      </div>
+      <div class="result-controls">
+        <button id="restartBtn">Rejouer</button>
+        <button id="clearBestBtn" class="secondary">Effacer meilleurs scores</button>
+      </div>
+      <h3>Meilleurs scores</h3>
+      <ol id="bestList"></ol>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
