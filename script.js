@@ -1,3 +1,35 @@
+let allQuestions = [];
+
+async function loadQuestions() {
+  try {
+    const response = await fetch('api/get_questions.php');
+    const data = await response.json();
+    
+    if (data.success) {
+      allQuestions = data.questions.map(q => ({
+        id: q.id,
+        flag: q.flag_image,
+        type: q.type,
+        country: q.country,
+        difficulty: q.difficulty,
+        answer: q.answer,
+        options: q.options || []
+      }));
+      
+      const quiz = new Quiz({ 
+        questions: allQuestions, 
+        timePerQuestion: 15 
+      });
+    } else {
+      alert('Erreur lors du chargement des questions');
+    }
+  } catch (error) {
+    console.error('Erreur de chargement:', error);
+    alert('Impossible de charger les questions. Vérifiez que le serveur PHP est démarré.');
+  }
+}
+
+
 class Quiz {
   constructor(options) {
     this.originalQuestions = options.questions;
@@ -9,7 +41,6 @@ class Quiz {
     this.timer = null;
     this.remaining = 0;
 
-    // Sélectionner 75% QCM et 25% TF
     this.questions = this.selectQuestions();
 
     this.qEl = document.getElementById("question");
@@ -40,13 +71,12 @@ class Quiz {
     this.show();
   }
 
-  // Sélectionne 75% QCM et 25% TF
   selectQuestions() {
     const qcm = this.originalQuestions.filter(q => !q.type || q.type !== "tf");
     const tf = this.originalQuestions.filter(q => q.type === "tf");
 
-    const total = 20; // ou Math.min(qcm.length + tf.length, 20)
-    const tfCount = Math.floor(total * 0.25); // 25%
+    const total = 20;
+    const tfCount = Math.floor(total * 0.25); 
     const qcmCount = total - tfCount;
 
     const selectedQCM = this.shuffle(qcm).slice(0, qcmCount);
@@ -70,34 +100,33 @@ class Quiz {
     return 3;
   }
 
-show() {
-  const q = this.questions[this.current];
-  const isTF = q.type === "tf";
+  show() {
+    const q = this.questions[this.current];
+    const isTF = q.type === "tf";
 
-  if (isTF) {
-    this.qEl.innerHTML = `Ce drapeau est-il celui de <strong class="highlight-country">${q.country}</strong> ? (${q.difficulty})`;
-  } else {
-    this.qEl.textContent = `Quel est ce drapeau ? (${q.difficulty})`;
-  }
+    if (isTF) {
+      this.qEl.innerHTML = `Ce drapeau est-il celui de <strong class="highlight-country">${q.country}</strong> ? (${q.difficulty})`;
+    } else {
+      this.qEl.textContent = `Quel est ce drapeau ? (${q.difficulty})`;
+    }
 
-  this.flagContainer.innerHTML = `<img src="images/${q.flag}" alt="Drapeau">`;
+    this.flagContainer.innerHTML = `<img src="images/${q.flag}" alt="Drapeau">`;
 
-  if (isTF) {
-    this.optionsEl.innerHTML = ["Vrai", "Faux"]
-      .map(o => `<button class="flag-option-btn">${o}</button>`)
-      .join("");
-  } else {
-    this.optionsEl.innerHTML = q.options
-      .map(opt => `<button class="flag-option-btn">${opt}</button>`)
-      .join("");
-  }
+    if (isTF) {
+      this.optionsEl.innerHTML = ["Vrai", "Faux"]
+        .map(o => `<button class="flag-option-btn">${o}</button>`)
+        .join("");
+    } else {
+      this.optionsEl.innerHTML = q.options
+        .map(opt => `<button class="flag-option-btn">${opt}</button>`)
+        .join("");
+    }
 
     this.selected = null;
     this.feedbackEl.classList.add("hidden");
     this.confirmBtn.disabled = false;
     this.startTimer();
 
-    // Gestion du clic sur les boutons
     document.querySelectorAll(".flag-option-btn").forEach(btn => {
       btn.disabled = false;
       btn.classList.remove("selected", "correct", "wrong");
@@ -108,11 +137,9 @@ show() {
       });
     });
 
-    // Progression
     const pct = (this.current / this.questions.length) * 100;
     this.progressEl.style.width = `${pct}%`;
 
-    // Animation
     this.quizSection.classList.remove("fade-in");
     void this.quizSection.offsetWidth;
     this.quizSection.classList.add("fade-in");
@@ -141,63 +168,88 @@ show() {
   autoTimeout() {
     if (!this.selected) {
       const q = this.questions[this.current];
-      const correct = q.type === "tf" ? q.answer : q.answer;
+      const correct = q.answer;
       this.feedbackEl.textContent = `⏱️ Temps écoulé ! La réponse était : ${correct}.`;
       this.feedbackEl.style.color = "var(--muted)";
+      this.feedbackEl.classList.remove("hidden");
     }
     this.revealAnswers();
     this.moveNextAfterDelay();
   }
 
-confirm() {
-  if (!this.selected) {
-    alert("Veuillez sélectionner une réponse !");
-    return;
-  }
-  clearInterval(this.timer);
-  const q = this.questions[this.current];
-  const base = Quiz.getPoints(q.difficulty);
-  const timeRatio = this.remaining / this.timePerQuestion;
+  async confirm() {
+    if (!this.selected) {
+      alert("Veuillez sélectionner une réponse !");
+      return;
+    }
+    
+    clearInterval(this.timer);
+    const q = this.questions[this.current];
+    
+    this.confirmBtn.disabled = true;
+    
+    try {
+      const response = await fetch('api/verify_answer.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question_id: q.id,
+          user_answer: this.selected
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        console.error('Erreur de vérification');
+        alert('Erreur lors de la vérification de la réponse');
+        return;
+      }
+      
+      const isCorrect = result.correct;
+      const base = result.base_points;
+      const timeRatio = this.remaining / this.timePerQuestion;
 
-  let awarded = 0;
-  let bonus = 0;
-  const isCorrect = this.selected === q.answer;
+      let awarded = 0;
+      let bonus = 0;
 
-  if (isCorrect) {
-    awarded = base; // point de base
-    this.score += base;
+      if (isCorrect) {
+        awarded = base;
+        this.score += base;
 
-    // Bonus si réponse très rapide (>80% du temps)
-    const bonusThreshold = 0.8;
-    if (timeRatio > bonusThreshold) {
-      bonus = Math.round(base * (timeRatio - bonusThreshold) / (1 - bonusThreshold));
-      awarded += bonus;
-      this.bonusScore += bonus; // ← on cumule les bonus
+        const bonusThreshold = 0.8;
+        if (timeRatio > bonusThreshold) {
+          bonus = Math.round(base * (timeRatio - bonusThreshold) / (1 - bonusThreshold));
+          awarded += bonus;
+          this.bonusScore += bonus;
+        }
+      }
+
+      document.querySelectorAll(".flag-option-btn").forEach(btn => {
+        const text = btn.textContent;
+        if (text === result.correct_answer) btn.classList.add("correct");
+        if (text === this.selected && !isCorrect) btn.classList.add("wrong");
+        btn.disabled = true;
+      });
+
+      if (isCorrect) {
+        const bonusText = bonus > 0 ? ` <span class="bonus-text">(+${bonus} bonus)</span>` : "";
+        this.feedbackEl.innerHTML = `✅ Bonne réponse ! +${base} pt${base > 1 ? "s" : ""}${bonusText}`;
+        this.feedbackEl.style.color = "var(--success)";
+      } else {
+        this.feedbackEl.textContent = `❌ Mauvaise réponse ! C'était : ${result.correct_answer}.`;
+        this.feedbackEl.style.color = "var(--error)";
+      }
+
+      this.feedbackEl.classList.remove("hidden");
+      this.moveNextAfterDelay();
+      
+    } catch (error) {
+      console.error('Erreur:', error);
+      alert('Erreur de connexion au serveur');
+      this.confirmBtn.disabled = false;
     }
   }
-
-  // Marqueur des boutons
-  document.querySelectorAll(".flag-option-btn").forEach(btn => {
-    const text = btn.textContent;
-    if (text === q.answer) btn.classList.add("correct");
-    if (text === this.selected && !isCorrect) btn.classList.add("wrong");
-    btn.disabled = true;
-  });
-
-  // Feedback
-  if (isCorrect) {
-    const bonusText = bonus > 0 ? ` <span class="bonus-text">(+${bonus} bonus)</span>` : "";
-    this.feedbackEl.innerHTML = `Bonne réponse ! +${base} pt${base > 1 ? "s" : ""}${bonusText}`;
-    this.feedbackEl.style.color = "var(--success)";
-  } else {
-    const correct = q.type === "tf" ? q.answer : q.answer;
-    this.feedbackEl.textContent = `Mauvaise réponse ! C'était : ${correct}.`;
-    this.feedbackEl.style.color = "var(--error)";
-  }
-
-  this.feedbackEl.classList.remove("hidden");
-  this.moveNextAfterDelay();
-}
 
   revealAnswers() {
     const q = this.questions[this.current];
@@ -210,7 +262,7 @@ confirm() {
   skip() {
     clearInterval(this.timer);
     const q = this.questions[this.current];
-    const correct = q.type === "tf" ? q.answer : q.answer;
+    const correct = q.answer;
     this.feedbackEl.textContent = `➡️ Passée. Réponse : ${correct}.`;
     this.feedbackEl.style.color = "var(--muted)";
     this.feedbackEl.classList.remove("hidden");
@@ -226,110 +278,99 @@ confirm() {
     }, delay);
   }
 
- finish() {
-  clearInterval(this.timer);
-  this.quizSection.classList.add("hidden");
-  this.resultSection.classList.remove("hidden");
+  async finish() {
+    clearInterval(this.timer);
+    this.quizSection.classList.add("hidden");
+    this.resultSection.classList.remove("hidden");
 
-  // Score de base + max de base
-  const baseMax = this.questions.reduce((s, q) => s + Quiz.getPoints(q.difficulty), 0);
-  const percent = Math.min(100, Math.round((this.score / baseMax) * 100)); // ← CAP À 100%
+    const baseMax = this.questions.reduce((s, q) => s + Quiz.getPoints(q.difficulty), 0);
+    const percent = Math.min(100, Math.round((this.score / baseMax) * 100));
 
-  // Affichage
-  this.scoreText.innerHTML = `
-    Score final : <strong>${this.score} / ${baseMax}</strong> points
-    <div style="margin-top:8px; font-size:0.95em; color:var(--primary);">
-      ${this.bonusScore > 0 
-        ? `<span style="color:#f39c12; font-weight:700;">+${this.bonusScore} points bonus vitesse</span>` 
-        : "Aucun bonus vitesse"}
-    </div>
-  `;
+    this.scoreText.innerHTML = `
+      Score final : <strong>${this.score} / ${baseMax}</strong> points
+      <div style="margin-top:8px; font-size:0.95em; color:var(--primary);">
+        ${this.bonusScore > 0 
+          ? `<span style="color:#f39c12; font-weight:700;">+${this.bonusScore} points bonus vitesse</span>` 
+          : "Aucun bonus vitesse"}
+      </div>
+    `;
 
-  // Barre de progression (max 100%)
-  this.finalPercent.style.width = "0%";
-  this.finalPercent.textContent = "0%";
+    this.finalPercent.style.width = "0%";
+    this.finalPercent.textContent = "0%";
 
-  setTimeout(() => {
-    this.finalPercent.style.width = percent + "%";
-    let cur = 0;
-    const intv = setInterval(() => {
-      cur += Math.max(1, Math.round(percent / 20));
-      if (cur >= percent) { cur = percent; clearInterval(intv); }
-      this.finalPercent.textContent = `${cur}%`;
-    }, 25);
-  }, 120);
+    setTimeout(() => {
+      this.finalPercent.style.width = percent + "%";
+      let cur = 0;
+      const intv = setInterval(() => {
+        cur += Math.max(1, Math.round(percent / 20));
+        if (cur >= percent) { cur = percent; clearInterval(intv); }
+        this.finalPercent.textContent = `${cur}%`;
+      }, 25);
+    }, 120);
 
-  this.saveBest({ 
-    score: this.score, 
-    max: baseMax, 
-    bonus: this.bonusScore,
-    date: new Date().toLocaleString(), 
-    percent 
-  });
-  this.renderBest();
-}
+    this.saveBest({ 
+      score: this.score, 
+      max: baseMax, 
+      bonus: this.bonusScore,
+      date: new Date().toLocaleString(), 
+      percent 
+    });
+
+    try {
+      const response = await fetch('api/save_score.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          score: this.score,
+          max_score: baseMax,
+          bonus_score: this.bonusScore,
+          percentage: percent
+        })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        console.log('Score sauvegardé dans la base de données');
+      }
+    } catch (error) {
+      console.log('Score non sauvegardé (utilisateur non connecté ou erreur serveur)');
+    }
+
+    this.renderBest();
+  }
 
   restart() {
     this.current = 0;
     this.score = 0;
+    this.bonusScore = 0;
     this.selected = null;
-    this.questions = this.selectQuestions(); // Nouvelle sélection
+    this.questions = this.selectQuestions();
     this.resultSection.classList.add("hidden");
     this.quizSection.classList.remove("hidden");
     this.show();
   }
 
-saveBest(entry) {
-  let arr = JSON.parse(localStorage.getItem("flag_quiz_best") || "[]");
-  arr.push(entry);
-  arr = arr.sort((a, b) => b.percent - a.percent).slice(0, 5);
-  localStorage.setItem("flag_quiz_best", JSON.stringify(arr));
-}
+  saveBest(entry) {
+    let arr = JSON.parse(localStorage.getItem("flag_quiz_best") || "[]");
+    arr.push(entry);
+    arr = arr.sort((a, b) => b.percent - a.percent).slice(0, 5);
+    localStorage.setItem("flag_quiz_best", JSON.stringify(arr));
+  }
 
   renderBest() {
-  const arr = JSON.parse(localStorage.getItem("flag_quiz_best") || "[]");
-  this.bestList.innerHTML = arr.length 
-    ? arr.map(e => `
-      <li>
-        ${e.percent}% — ${e.score}/${e.max} 
-        ${e.bonus > 0 ? `<span style="color:#f39c12; font-weight:600;">(+${e.bonus} bonus)</span>` : ""}
-        — ${e.date}
-      </li>
-    `).join("")
-    : "<li>Aucun score enregistré</li>";
+    const arr = JSON.parse(localStorage.getItem("flag_quiz_best") || "[]");
+    this.bestList.innerHTML = arr.length 
+      ? arr.map(e => `
+        <li>
+          ${e.percent}% — ${e.score}/${e.max} 
+          ${e.bonus > 0 ? `<span style="color:#f39c12; font-weight:600;">(+${e.bonus} bonus)</span>` : ""}
+          — ${e.date}
+        </li>
+      `).join("")
+      : "<li>Aucun score enregistré</li>";
+  }
 }
-}
 
-// === DONNÉES DES QUESTIONS (avec `country` pour les TF) ===
-const questions = [
-  { flag: "france.png", options: ["France", "Italie", "Allemagne", "Pays-Bas"], answer: "France", difficulty: "facile" },
-  { flag: "italy.png", options: ["Mexique", "Italie", "Irlande", "Brésil"], answer: "Italie", difficulty: "facile" },
-  { flag: "germany.png", options: ["Belgique", "Allemagne", "Espagne", "Autriche"], answer: "Allemagne", difficulty: "facile" },
-  { flag: "spain.png", options: ["Portugal", "Espagne", "Roumanie", "Pologne"], answer: "Espagne", difficulty: "facile" },
-  { flag: "canada.png", options: ["Canada", "Suisse", "Danemark", "Autriche"], answer: "Canada", difficulty: "facile" },
-  { flag: "brazil.png", options: ["Brésil", "Portugal", "Argentine", "Chili"], answer: "Brésil", difficulty: "moyen" },
-  { flag: "argentina.png", options: ["Uruguay", "Argentine", "Chili", "Colombie"], answer: "Argentine", difficulty: "moyen" },
-  { flag: "morocco.png", options: ["Algérie", "Tunisie", "Maroc", "Égypte"], answer: "Maroc", difficulty: "moyen" },
-  { flag: "turkey.png", options: ["Pakistan", "Tunisie", "Turquie", "Égypte"], answer: "Turquie", difficulty: "moyen" },
-  { flag: "japan.png", options: ["Japon", "Chine", "Corée du Sud", "Indonésie"], answer: "Japon", difficulty: "moyen" },
-  { flag: "iceland.png", options: ["Finlande", "Norvège", "Islande", "Suède"], answer: "Islande", difficulty: "difficile" },
-  { flag: "estonia.png", options: ["Lettonie", "Estonie", "Lituanie", "Finlande"], answer: "Estonie", difficulty: "difficile" },
-  { flag: "kenya.png", options: ["Kenya", "Nigéria", "Ghana", "Éthiopie"], answer: "Kenya", difficulty: "difficile" },
-  { flag: "southkorea.png", options: ["Japon", "Chine", "Corée du Sud", "Vietnam"], answer: "Corée du Sud", difficulty: "difficile" },
-  { flag: "newzealand.png", options: ["Australie", "Royaume-Uni", "Nouvelle-Zélande", "Fidji"], answer: "Nouvelle-Zélande", difficulty: "difficile" },
-  { flag: "mexico.png", options: ["Italie", "Mexique", "Hongrie", "Brésil"], answer: "Mexique", difficulty: "facile" },
-  { flag: "egypt.png", options: ["Égypte", "Maroc", "Liban", "Tunisie"], answer: "Égypte", difficulty: "moyen" },
-  { flag: "australia.png", options: ["Nouvelle-Zélande", "Australie", "Fidji", "Samoa"], answer: "Australie", difficulty: "moyen" },
-  { flag: "vietnam.png", options: ["Chine", "Vietnam", "Philippines", "Thaïlande"], answer: "Vietnam", difficulty: "moyen" },
-
-  // === Questions Vrai/Faux (25%) ===
-  { flag: "india.png", type: "tf", answer: "Vrai", country: "l'Inde", difficulty: "facile" },
-  { flag: "usa.png", type: "tf", answer: "Faux", country: "la France", difficulty: "facile" },
-  { flag: "uk.png", type: "tf", answer: "Vrai", country: "le Royaume-Uni", difficulty: "moyen" },
-  { flag: "china.png", type: "tf", answer: "Faux", country: "le Japon", difficulty: "moyen" },
-  { flag: "sweden.png", type: "tf", answer: "Vrai", country: "la Suède", difficulty: "difficile" },
-  { flag: "norway.png", type: "tf", answer: "Faux", country: "le Danemark", difficulty: "difficile" }
-];
-
-// Lancement du quiz
-const quiz = new Quiz({ questions, timePerQuestion: 15 });
+window.addEventListener('DOMContentLoaded', () => {
+  loadQuestions();
+});
